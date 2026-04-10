@@ -49,7 +49,7 @@ class TokenResponse(BaseModel):
 
 
 # ─────────────────────────────────────────────
-#  POST /api/v1/auth/register
+#  POST /api/v1/auth/register 
 # ─────────────────────────────────────────────
 
 @router.post(

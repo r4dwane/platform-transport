@@ -7,5 +7,4 @@ client = AsyncIOMotorClient(MONGO_URI)
 
 
 db = client.transport_db
-
 #users_collection = db.get_collection("utilisateurs")

@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 from typing import Optional
-
+import bcrypt
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
@@ -17,13 +17,16 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 # ─────────────────────────────────────────────
 
 def hash_password(plain_password: str) -> str:
-    """Hash a plain-text password using bcrypt."""
-    return pwd_context.hash(plain_password)
-
+    return bcrypt.hashpw(
+        plain_password.encode("utf-8"),
+        bcrypt.gensalt(rounds=12)
+    ).decode("utf-8")
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Check a plain-text password against its bcrypt hash."""
-    return pwd_context.verify(plain_password, hashed_password)
+    return bcrypt.checkpw(
+        plain_password.encode("utf-8"),
+        hashed_password.encode("utf-8")
+    )
 
 
 # ─────────────────────────────────────────────
