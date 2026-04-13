@@ -6,7 +6,7 @@ from datetime import datetime
 from app.database import db
 from app.dependencies import require_role, get_current_user
 from app.models.user import RoleUtilisateur
-from app.models.vehicule import VehiculeModel, TypeVehicule
+from app.models.vehicul import VehiculeModel, TypeVehicule
 from app.models.load import GeoPoint
 from bson import ObjectId
 
