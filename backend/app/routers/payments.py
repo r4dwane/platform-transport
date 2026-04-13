@@ -8,6 +8,7 @@ from app.models.payment import MethodePaiement
 from app.models.trip import StatutTrajet
 from app.dependencies import require_role, get_current_user
 from app.models.user import RoleUtilisateur
+from app.services.notification import notify_payment_confirmed
 
 router = APIRouter(prefix="/api/v1/payments", tags=["Paiements"])
 
@@ -51,7 +52,7 @@ async def confirm_payment(
     trip_id: str,
     payload: ConfirmPaymentRequest,
     current_user: dict = Depends(require_role(RoleUtilisateur.CLIENT))
-):
+): 
     trip = await db["trajets"].find_one({"_id": trip_id})
     if not trip:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trajet introuvable.")
@@ -86,6 +87,11 @@ async def confirm_payment(
         update_fields["infoPaiement.transactionId"] = payload.transaction_id
 
     await db["trajets"].update_one({"_id": trip_id}, {"$set": update_fields})
+    await notify_payment_confirmed(
+    driver_id=trip["chauffeurId"],
+    trip_id=trip_id,
+    montant=payment.get("montant", 0)
+    )  
     return {"message": "Paiement confirmé avec succès."}
 
 
