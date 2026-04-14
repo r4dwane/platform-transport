@@ -16,7 +16,7 @@ from app.routers.tracking import router as tracking_router
 app = FastAPI(
     title="TransportDZ API",
     version="1.0.0"
-)
+    )
 
 app.add_middleware(
     CORSMiddleware,
