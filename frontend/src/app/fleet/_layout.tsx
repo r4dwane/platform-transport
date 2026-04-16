@@ -1,7 +1,7 @@
 import { Tabs } from "expo-router";
 import { Colors } from "@/constants/colors";
 import { BarChart2, Users, Truck, Clock, User } from "lucide-react-native";
-import { NotificationBell } from "@/components/notification /NotificationBell";
+import { NotificationBell } from "@/components/notification/NotificationBell";
  
 export default function FleetLayout() {
   return (
