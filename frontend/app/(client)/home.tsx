@@ -63,7 +63,7 @@ export default function ClientHomeScreen() {
           renderItem={({ item }) => (
             <LoadCard
               load={item}
-              onPress={() => router.push({ pathname: "/client/offers", params: { loadId: item.id } })}
+              onPress={() => router.push({ pathname: "/(client)/offers", params: { loadId: item.id } })}
             />
           )}
           contentContainerStyle={{ padding: 16, paddingBottom: 100 }}

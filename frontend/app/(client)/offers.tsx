@@ -20,7 +20,7 @@ export default function ClientOffersScreen() {
  
   const handleAccept = async (offerId: string) => {
     const tripId = await acceptOffer(offerId, MethodePaiement.CASH);
-    if (tripId) router.push({ pathname: "/client/tracking", params: { tripId } });
+    if (tripId) router.push({ pathname: "/(client)/tracking", params: { tripId } });
   };
  
   return (

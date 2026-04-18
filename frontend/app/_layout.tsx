@@ -30,14 +30,14 @@ export default function RootLayout() {
  
     // Authenticated — route to the correct tab group by role
     if (role === RoleUtilisateur.CLIENT) {
-      router.replace("/client/home");
+      router.replace("/(client)/home");
     } else if (
       role === RoleUtilisateur.CHAUFFEUR_IND ||
       role === RoleUtilisateur.CHAUFFEUR_FLOTTE
     ) {
-      router.replace("/driver/home");
+      router.replace("/(driver)/home");
     } else if (role === RoleUtilisateur.PROP_FLOTTE) {
-      router.replace("/fleet/dashboard");
+      router.replace("/(fleet)/dashboard");
     }
   }, [isAuthenticated, role, isReady]);
  
