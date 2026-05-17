@@ -9,7 +9,7 @@ class TypeVehicule(str, Enum):
     FRIGORIFIQUE = "FRIGORIFIQUE"
 
 class VehiculeModel(BaseModel):
-    proprietaireId: str # Référence à l'Utilisateur
+    proprietaireId: Optional[str] = None # Référence à l'Utilisateur
     type: TypeVehicule
     capaciteKg: float = Field(..., gt=0)
     capaciteM3: Optional[float] = None

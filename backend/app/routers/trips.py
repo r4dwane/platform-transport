@@ -113,12 +113,15 @@ async def advance_trip_status(
         )
 
     # Notify client and driver of the status change
-    await notify_trip_status(
-        client_id=trip["clientId"],
-        driver_id=trip["chauffeurId"],
-        trip_id=trip_id,
-        new_status=next_status.value
-    )
+    try:
+        await notify_trip_status(
+            client_id=trip["clientId"],
+            driver_id=trip["chauffeurId"],
+            trip_id=trip_id,
+            new_status=next_status.value
+        )
+    except Exception as e:
+        print(f"Notification error (non-critical): {e}")
 
     return {"message": f"Statut mis à jour : {next_status}.", "nouveau_statut": next_status}
 

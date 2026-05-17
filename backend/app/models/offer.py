@@ -1,6 +1,7 @@
 from enum import Enum
 from pydantic import BaseModel, Field
 from datetime import datetime
+from typing import  Optional
 
 class statutOffre(str, Enum):
     EN_ATTENTE = "EN_ATTENTE"
@@ -9,7 +10,7 @@ class statutOffre(str, Enum):
 
 class OffreModel(BaseModel):
     chargeId: str      # La marchandise concernée
-    chauffeurId: str   # Celui qui propose ses services
+    chauffeurId: Optional[str] = None # Celui qui propose ses services
     vehiculeId: str    # Le camion qu'il compte utiliser
     
     prixPropose: float = Field(..., gt=0)

@@ -4,7 +4,7 @@ from datetime import datetime
 
 from app.database import db
 from app.models.offer import OffreModel, statutOffre
-from app.models.load import StatutCharge
+from app.models.load import StatutCharge, TypeMarche
 from app.models.trip import StatutTrajet
 from app.models.payment import MethodePaiement
 from app.dependencies import require_role, get_current_user
@@ -107,6 +107,12 @@ async def accept_offer(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Ce n'est pas votre charge.")
     if load["status"] != StatutCharge.DISPONIBLE:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cette charge n'est plus disponible.")
+    if load.get("marche") == TypeMarche.FLOTTE:
+        raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Cette charge est réservée aux flottes. "
+               "Les chauffeurs indépendants ne peuvent pas soumettre d'offres."
+    )
 
     trip_id = str(ObjectId())
     payment_doc = {

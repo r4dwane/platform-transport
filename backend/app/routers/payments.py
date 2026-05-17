@@ -1,3 +1,5 @@
+from fastapi.responses import Response
+from app.services.invoice import generate_invoice_pdf
 from fastapi import APIRouter, HTTPException, status, Depends
 from pydantic import BaseModel
 from typing import Optional
@@ -116,3 +118,48 @@ async def fail_payment(
         {"$set": {"infoPaiement.status": "ECHOUE"}}
     )
     return {"message": "Paiement marqué comme échoué."}
+
+
+# ─────────────────────────────────────────────
+#  GET /api/v1/payments/trip/{trip_id}/invoice
+# ─────────────────────────────────────────────
+
+@router.get(
+    "/trip/{trip_id}/invoice",
+    summary="Télécharger la facture PDF d'un trajet"
+)
+async def download_invoice(
+    trip_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    trip = await db["trajets"].find_one({"_id": trip_id})
+    if not trip:
+        raise HTTPException(status_code=404, detail="Trajet introuvable.")
+
+    uid = current_user["_id"]
+    if uid not in [trip["clientId"], trip["chauffeurId"]]:
+        raise HTTPException(status_code=403, detail="Accès refusé.")
+
+    if trip["status"] != StatutTrajet.LIVRE:
+        raise HTTPException(
+            status_code=400,
+            detail="La facture n'est disponible qu'après la livraison."
+        )
+
+    load   = await db["charges"].find_one({"_id": trip["chargeId"]})
+    client = await db["users"].find_one({"_id": trip["clientId"]})
+    driver = await db["users"].find_one({"_id": trip["chauffeurId"]})
+
+    if not all([load, client, driver]):
+        raise HTTPException(status_code=500, detail="Données incomplètes pour générer la facture.")
+
+    pdf_bytes  = generate_invoice_pdf(trip, load, client, driver)
+    invoice_no = f"TDZ-{datetime.utcnow().strftime('%Y%m')}-{trip_id[-6:].upper()}"
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="facture-{invoice_no}.pdf"'
+        }
+    )

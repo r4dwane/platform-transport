@@ -14,6 +14,7 @@ from app.websocket.manager import manager
 from app.services.gps import get_driver_location, get_trip_location
 from app.services.notification import get_user_notifications, mark_as_read, mark_all_as_read
 from app.dependencies import get_current_user
+from app.database import db
 
 router = APIRouter(tags=["Tracking & WebSocket"])
 
@@ -119,3 +120,15 @@ async def read_all_notifications(
 ):
     await mark_all_as_read(current_user["_id"])
     return {"message": "Toutes les notifications sont marquées comme lues."}
+
+
+
+
+@router.get("/api/v1/tracking/trip/{trip_id}/history")
+async def trip_history(trip_id: str, current_user: dict = Depends(get_current_user)):
+    trip = await db["trajets"].find_one({"_id": trip_id}, {"tracking": 1, "clientId": 1, "chauffeurId": 1})
+    if not trip:
+        raise HTTPException(status_code=404, detail="Trajet introuvable.")
+    if current_user["_id"] not in [trip.get("clientId"), trip.get("chauffeurId")]:
+        raise HTTPException(status_code=403, detail="Acces refuse.")
+    return {"trip_id": trip_id, "tracking": trip.get("tracking", [])}

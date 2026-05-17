@@ -1,17 +1,20 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Depends
 from pydantic import BaseModel, Field
 from bson import ObjectId
-from datetime import datetime
+from datetime import datetime, timedelta
+import random
+import string
 
 from app.database import db
 from app.models.user import UtilisateurModel, RoleUtilisateur
 from app.auth.jwt_handler import hash_password, verify_password, create_access_token
+from app.dependencies import get_current_user
 
 router = APIRouter(prefix="/api/v1/auth", tags=["Authentification"])
 
 
 # ─────────────────────────────────────────────
-#  Request / Response schemas
+#  Schemas
 # ─────────────────────────────────────────────
 
 class RegisterRequest(BaseModel):
@@ -20,20 +23,10 @@ class RegisterRequest(BaseModel):
     email: str
     motDePasse: str = Field(..., min_length=8)
     role: RoleUtilisateur
-
-    # Only required when role = CHAUFFEUR_FLOTTE
+    # For CHAUFFEUR_FLOTTE: provide invite code instead of employeurId
+    inviteCode: str | None = None
+    # Keep employeurId for backward compatibility (direct assignment)
     employeurId: str | None = None
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "nom": "Karim Boudiaf",
-                "telephone": "+213555987654",
-                "email": "karim@transport.dz",
-                "motDePasse": "securepass123",
-                "role": "CHAUFFEUR_IND"
-            }
-        }
 
 
 class LoginRequest(BaseModel):
@@ -49,43 +42,70 @@ class TokenResponse(BaseModel):
 
 
 # ─────────────────────────────────────────────
-#  POST /api/v1/auth/register 
+#  POST /api/v1/auth/register
 # ─────────────────────────────────────────────
 
-@router.post(
-    "/register",
-    status_code=status.HTTP_201_CREATED,
-    summary="Créer un nouveau compte utilisateur"
-)
+@router.post("/register", status_code=status.HTTP_201_CREATED,
+             summary="Créer un nouveau compte utilisateur")
 async def register(payload: RegisterRequest):
-    # 1. Check if phone number already exists
+    # 1. Check phone uniqueness
     existing = await db["users"].find_one({"telephone": payload.telephone})
     if existing:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Ce numéro de téléphone est déjà utilisé."
-        )
+        raise HTTPException(status_code=409,
+                            detail="Ce numéro de téléphone est déjà utilisé.")
 
-    # 2. Validate business rule : CHAUFFEUR_FLOTTE must provide employeurId
-    if payload.role == RoleUtilisateur.CHAUFFEUR_FLOTTE and not payload.employeurId:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Un chauffeur de flotte doit fournir l'ID de son employeur."
-        )
+    employer_id = None
 
-    # 3. If employeurId provided, verify the employer exists and has the right role
-    if payload.employeurId:
-        employer = await db["users"].find_one({
-            "_id": payload.employeurId,
-            "role": RoleUtilisateur.PROP_FLOTTE.value
-        })
-        if not employer:
+    if payload.role == RoleUtilisateur.CHAUFFEUR_FLOTTE:
+        # Must provide either inviteCode or employeurId
+        if not payload.inviteCode and not payload.employeurId:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Propriétaire de flotte introuvable."
+                status_code=422,
+                detail="Un chauffeur de flotte doit fournir un code d'invitation."
             )
 
-    # 4. Build the user document
+        if payload.inviteCode:
+            # Look up the invite code
+            invite = await db["invite_codes"].find_one({
+                "code": payload.inviteCode.upper().strip(),
+                "used": False,
+            })
+            if not invite:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Code d'invitation invalide ou déjà utilisé."
+                )
+            # Check expiry
+            if invite["expiresAt"] < datetime.utcnow():
+                raise HTTPException(
+                    status_code=400,
+                    detail="Ce code d'invitation a expiré. "
+                           "Demandez un nouveau code à votre employeur."
+                )
+            employer_id = invite["ownerId"]
+
+            # Mark code as used
+            await db["invite_codes"].update_one(
+                {"_id": invite["_id"]},
+                {"$set": {
+                    "used": True,
+                    "usedAt": datetime.utcnow(),
+                    "usedBy": payload.telephone,
+                }}
+            )
+
+        elif payload.employeurId:
+            # Legacy: direct employeurId
+            employer = await db["users"].find_one({
+                "_id": payload.employeurId,
+                "role": RoleUtilisateur.PROP_FLOTTE.value
+            })
+            if not employer:
+                raise HTTPException(status_code=404,
+                                    detail="Propriétaire de flotte introuvable.")
+            employer_id = payload.employeurId
+
+    # 2. Build user doc
     user_doc = {
         "_id": str(ObjectId()),
         "nom": payload.nom,
@@ -95,11 +115,10 @@ async def register(payload: RegisterRequest):
         "role": payload.role.value,
         "note": 0.0,
         "estVerifie": False,
-        "employeurId": payload.employeurId,
+        "employeurId": employer_id,
         "createdAt": datetime.utcnow()
     }
 
-    # 5. Insert into MongoDB
     await db["users"].insert_one(user_doc)
 
     return {
@@ -113,68 +132,28 @@ async def register(payload: RegisterRequest):
 #  POST /api/v1/auth/login
 # ─────────────────────────────────────────────
 
-@router.post(
-    "/login",
-    response_model=TokenResponse,
-    summary="Se connecter et obtenir un token JWT"
-)
+@router.post("/login", response_model=TokenResponse,
+             summary="Se connecter et obtenir un token JWT")
 async def login(payload: LoginRequest):
-    # 1. Find user by phone number
     user = await db["users"].find_one({"telephone": payload.telephone})
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Numéro de téléphone ou mot de passe incorrect."
-        )
+        raise HTTPException(status_code=401,
+                            detail="Numéro de téléphone ou mot de passe incorrect.")
 
-    # 2. Verify password
     if not verify_password(payload.motDePasse, user["motDePasse"]):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Numéro de téléphone ou mot de passe incorrect."
-        )
+        raise HTTPException(status_code=401,
+                            detail="Numéro de téléphone ou mot de passe incorrect.")
 
-    # 3. Create JWT — payload contains user_id and role
-    token = create_access_token(data={
-        "sub": user["_id"],
-        "role": user["role"]
-    })
+    token = create_access_token(data={"sub": user["_id"], "role": user["role"]})
 
-    return TokenResponse(
-        access_token=token,
-        role=user["role"],
-        user_id=user["_id"]
-    )
+    return TokenResponse(access_token=token, role=user["role"], user_id=user["_id"])
 
 
 # ─────────────────────────────────────────────
-#  GET /api/v1/auth/me  (quick profile check)
+#  GET /api/v1/auth/me
 # ─────────────────────────────────────────────
 
-@router.get(
-    "/me",
-    summary="Récupérer le profil de l'utilisateur connecté"
-)
-async def get_me(token: str):
-    """
-    Quick endpoint to verify a token and return basic profile info.
-    In production this uses Depends(get_current_user) from dependencies.py
-    """
-    from app.auth.jwt_handler import decode_access_token
-    payload = decode_access_token(token)
-    if not payload:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token invalide ou expiré."
-        )
-
-    user = await db["users"].find_one({"_id": payload.get("sub")})
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Utilisateur introuvable."
-        )
-
-    # Never return the hashed password
-    user.pop("motDePasse", None)
-    return user
+@router.get("/me", summary="Récupérer le profil de l'utilisateur connecté")
+async def get_me(current_user: dict = Depends(get_current_user)):
+    current_user.pop("motDePasse", None)
+    return current_user
