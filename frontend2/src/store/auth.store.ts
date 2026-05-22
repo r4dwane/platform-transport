@@ -2,6 +2,11 @@ import { create } from "zustand";
 import * as SecureStore from "expo-secure-store";
 import { User, RoleUtilisateur, LoginPayload, RegisterPayload } from "@/types/user.types";
 import { authService } from "@/services/auth.service";
+
+const normalizeUser = (profile: any): User => ({
+  ...profile,
+  id: profile.id ?? profile._id,
+});
  
 interface AuthState {
   user: User | null;
@@ -38,7 +43,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       set({
         token: data.access_token,
         role: data.role,
-        user: profile,
+        user: normalizeUser(profile),
         isAuthenticated: true,
       });
     } finally {
@@ -68,7 +73,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     if (token && role) {
       try {
         const { data: profile } = await authService.me();
-        set({ token, role, user: profile, isAuthenticated: true });
+        set({ token, role, user: normalizeUser(profile), isAuthenticated: true });
       } catch {
         // Token expired
         await SecureStore.deleteItemAsync("access_token");

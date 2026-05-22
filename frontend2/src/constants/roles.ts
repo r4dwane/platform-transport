@@ -1,4 +1,4 @@
-export const API_BASE_URL = "http://192.168.1.42:8000"; // ← replace x with your local IP
+export const API_BASE_URL = "http://10.250.222.130:8000"; // ← replace x with your local IP
 // To find your IP on Windows: run `ipconfig` and look for IPv4 Address
  
 export const ENDPOINTS = {
@@ -34,5 +34,5 @@ export const ENDPOINTS = {
   notifications: "/api/v1/notifications",
  
   // WebSocket
-  ws: (userId: string) => `ws://192.168.1.42:8000/ws/${userId}`,
+  ws: (userId: string) => `ws://10.250.222.130:8000/ws/${userId}`,
 };

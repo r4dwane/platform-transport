@@ -37,7 +37,7 @@ export default function ClientLayout() {
       <Tabs.Screen
         name="tracking"
         options={{
-          title: "Tracking",
+          title: "Missions",
           tabBarIcon: ({ color }) => <MapPin size={22} color={color} />,
         }}
       />
@@ -54,6 +54,10 @@ export default function ClientLayout() {
           title: "Profil",
           tabBarIcon: ({ color }) => <User size={22} color={color} />,
         }}
+      />
+      <Tabs.Screen
+        name="trip-detail"
+        options={{ href: null }}
       />
     </Tabs>
   );

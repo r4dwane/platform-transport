@@ -26,6 +26,7 @@ export interface RegisterPayload {
   motDePasse: string;
   role: RoleUtilisateur;
   employeurId?: string;
+  inviteCode?: string;
 }
 
 export interface LoginPayload {

@@ -209,7 +209,7 @@ export default function ClientOffersScreen() {
             <LoadOfferSection
               load={item}
               onAccepted={(tripId) =>
-                router.push({ pathname: "/(client)/tracking", params: { tripId } })
+                router.push({ pathname: "/(client)/trip-detail", params: { tripId } })
               }
             />
           )}

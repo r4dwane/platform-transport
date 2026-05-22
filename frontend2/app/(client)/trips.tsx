@@ -32,7 +32,7 @@ export default function ClientTripsScreen() {
           renderItem={({ item }) => (
             <TripCard
               trip={item}
-              onPress={() => router.push({ pathname: "/(client)/tracking", params: { tripId: item.id } })}
+              onPress={() => router.push({ pathname: "/(client)/trip-detail", params: { tripId: item.id } })}
             />
           )}
           contentContainerStyle={{ padding: 16, paddingBottom: 40 }}

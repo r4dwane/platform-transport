@@ -15,7 +15,12 @@ export const useTracking = (tripId: string | null, userId: string | null) => {
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
-    if (!tripId) return;
+    if (!tripId) {
+      setDriverLocation(null);
+      return;
+    }
+
+    setDriverLocation(null);
 
     api.get(`/api/v1/tracking/trip/${tripId}`)
       .then(({ data }) => {
@@ -23,7 +28,12 @@ export const useTracking = (tripId: string | null, userId: string | null) => {
           setDriverLocation(data.location);
         }
       })
-      .catch(() => {});
+      .catch((error) => {
+        if (error?.response?.status !== 404) {
+          console.warn("Tracking REST error", error?.response?.data ?? error?.message ?? error);
+        }
+        setDriverLocation(null);
+      });
   }, [tripId]);
 
   useEffect(() => {
@@ -33,7 +43,7 @@ export const useTracking = (tripId: string | null, userId: string | null) => {
     wsRef.current = ws;
 
     ws.onopen = () => {
-      console.log("Tracking WS connected");
+      console.log("Tracking WS connected", userId);
     };
 
     ws.onmessage = (event) => {
@@ -42,7 +52,9 @@ export const useTracking = (tripId: string | null, userId: string | null) => {
         if (data.event === "location_update" && data.trip_id === tripId) {
           setDriverLocation({ lon: data.lon, lat: data.lat, ts: data.ts });
         }
-      } catch {}
+      } catch (error) {
+        console.warn("Tracking WS message error", error);
+      }
     };
 
     ws.onerror = (e) => console.warn("WS error", e);
@@ -64,8 +76,16 @@ export const useDriverTracking = (tripId: string | null) => {
   useEffect(() => {
     if (!tripId || !location) return;
 
+    const sendLocation = () => {
+      updateLocation(tripId, location.longitude, location.latitude).catch((error) => {
+        console.warn("GPS update failed", error?.response?.data ?? error?.message ?? error);
+      });
+    };
+
+    sendLocation();
+
     intervalRef.current = setInterval(() => {
-      updateLocation(tripId, location.longitude, location.latitude);
+      sendLocation();
     }, 5000);
 
     return () => {

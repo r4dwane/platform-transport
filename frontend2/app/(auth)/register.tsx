@@ -41,7 +41,7 @@ export default function RegisterScreen() {
         email: form.email,
         motDePasse: form.motDePasse,
         role: form.role,
-        employeurId: form.role === RoleUtilisateur.CHAUFFEUR_FLOTTE
+        inviteCode: form.role === RoleUtilisateur.CHAUFFEUR_FLOTTE
           ? form.employeurId
           : undefined,
       });
@@ -165,12 +165,20 @@ export default function RegisterScreen() {
             </View>
  
             {form.role === RoleUtilisateur.CHAUFFEUR_FLOTTE && (
-              <Input
-                label="ID de votre employeur"
-                value={form.employeurId}
-                onChangeText={(v) => set("employeurId", v)}
-                placeholder="ID du propriétaire de flotte"
-              />
+              <View style={{ marginBottom: 16 }}>
+                <Input
+                  label="Code d'invitation"
+                  value={form.employeurId}
+                  onChangeText={(v) => set("employeurId", v.toUpperCase())}
+                  placeholder="Ex: ABC123"
+                  autoCapitalize="characters"
+                  maxLength={6}
+                  leftIcon={<Text style={{ fontSize: 16 }}>🎟️</Text>}
+                />
+                <Text style={{ fontSize: 12, color: Colors.textMuted, marginTop: 6, marginLeft: 4 }}>
+                  Demandez ce code à votre propriétaire de flotte.
+                </Text>
+              </View>
             )}
  
             {error && (
