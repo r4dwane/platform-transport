@@ -42,7 +42,7 @@ async def websocket_endpoint(user_id: str, websocket: WebSocket):
             if data.get("ping"):
                 await websocket.send_json({"pong": True})
     except WebSocketDisconnect:
-        manager.disconnect(user_id)
+        manager.disconnect(user_id, websocket)
 
 
 # ─────────────────────────────────────────────

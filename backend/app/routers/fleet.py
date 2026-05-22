@@ -419,7 +419,7 @@ async def optimize_fleet(
         }
 
     # Run optimization
-    assignments = optimize_assignments(available_drivers, loads)
+    assignments = await optimize_assignments(available_drivers, loads)
 
     return {
         "message": f"{len(assignments)} assignation(s) optimisée(s).",

@@ -1,64 +1,48 @@
-"""
-manager.py
-----------
-Manages active WebSocket connections.
-
-Each connected user is registered by their user_id.
-This allows the server to push messages to specific users at any time —
-for live GPS tracking, offer notifications, trip status updates, etc.
-"""
-
 import json
-from typing import Dict
+from typing import Dict, List
+
 from fastapi import WebSocket
 
 
 class ConnectionManager:
     def __init__(self):
-        # { user_id: WebSocket }
-        self.active: Dict[str, WebSocket] = {}
-
-    # ── Lifecycle ─────────────────────────────────────────────────────────
+        self.active: Dict[str, List[WebSocket]] = {}
 
     async def connect(self, user_id: str, websocket: WebSocket):
-        """Accept and register a new WebSocket connection."""
         await websocket.accept()
-        self.active[user_id] = websocket
-        print(f"🔌  WS connected  : {user_id}")
+        self.active.setdefault(user_id, []).append(websocket)
+        print(f"WS connected: {user_id} ({len(self.active[user_id])})")
 
-    def disconnect(self, user_id: str):
-        """Remove a connection (called on disconnect or error)."""
-        self.active.pop(user_id, None)
-        print(f"🔌  WS disconnected: {user_id}")
+    def disconnect(self, user_id: str, websocket: WebSocket | None = None):
+        if websocket is None:
+            self.active.pop(user_id, None)
+        else:
+            sockets = self.active.get(user_id, [])
+            remaining = [ws for ws in sockets if ws is not websocket]
+            if remaining:
+                self.active[user_id] = remaining
+            else:
+                self.active.pop(user_id, None)
 
-    # ── Sending ───────────────────────────────────────────────────────────
+        print(f"WS disconnected: {user_id}")
 
     async def send_to(self, user_id: str, data: dict):
-        """
-        Send a JSON message to a specific user.
-        Silently ignores if the user is not connected.
-        """
-        ws = self.active.get(user_id)
-        if ws:
+        sockets = list(self.active.get(user_id, []))
+        for ws in sockets:
             try:
                 await ws.send_text(json.dumps(data))
             except Exception:
-                # Connection dropped — clean up
-                self.disconnect(user_id)
+                self.disconnect(user_id, ws)
 
     async def broadcast(self, user_ids: list[str], data: dict):
-        """Send the same message to multiple users at once."""
         for uid in user_ids:
             await self.send_to(uid, data)
 
-    # ── Helpers ───────────────────────────────────────────────────────────
-
     def is_connected(self, user_id: str) -> bool:
-        return user_id in self.active
+        return bool(self.active.get(user_id))
 
     def connected_count(self) -> int:
-        return len(self.active)
+        return sum(len(sockets) for sockets in self.active.values())
 
 
-# Singleton — import this instance everywhere
 manager = ConnectionManager()
