@@ -1,7 +1,5 @@
 """
-app/services/optimization.py
-─────────────────────────────
-Fleet optimization engine using ORS Matrix API for real road distances.
+app/services/optimization.pyFleet optimization engine using ORS Matrix API for real road distances.
 Falls back to Haversine if ORS is unavailable.
 """
 
@@ -29,11 +27,14 @@ def estimate_trip_km(
     driver_lat: float, driver_lon: float,
     pickup_lat: float, pickup_lon: float,
     dropoff_lat: float, dropoff_lon: float,
-    empty_km_override: Optional[float] = None
+    empty_km_override: Optional[float] = None,
+    loaded_km_override: Optional[float] = None,   # ← NEW
 ) -> Dict[str, float]:
     empty_leg  = empty_km_override if empty_km_override is not None \
                  else haversine_km(driver_lat, driver_lon, pickup_lat, pickup_lon)
-    loaded_leg = haversine_km(pickup_lat, pickup_lon, dropoff_lat, dropoff_lon)
+    # Use ORS road distance for loaded leg when available, else Haversine
+    loaded_leg = loaded_km_override if loaded_km_override is not None \
+                 else haversine_km(pickup_lat, pickup_lon, dropoff_lat, dropoff_lon)
     total      = round(empty_leg + loaded_leg, 2)
     return {
         "empty_km":       empty_leg,
@@ -45,71 +46,98 @@ def estimate_trip_km(
 
 # ─────────────────────────────────────────────
 #  ORS Matrix API
-#  One call returns ALL driver→pickup distances
-#  Much faster than N×M individual route calls
+#  One call returns ALL pairwise distances
 # ─────────────────────────────────────────────
 
 async def fetch_ors_distance_matrix(
     driver_positions: List[Dict],   # [{lon, lat, driver_id}, ...]
     pickup_positions: List[Dict],   # [{lon, lat, load_id}, ...]
-) -> Optional[List[List[float]]]:
+    dropoff_positions: List[Dict],  # ← NEW [{lon, lat, load_id}, ...]
+) -> Optional[Dict]:
     """
-    Returns a matrix[i][j] = road distance in km
-    from driver i to pickup j.
+    Returns:
+      {
+        "driver_to_pickup":  matrix[i][j] = road km, driver i → pickup j
+        "pickup_to_dropoff": matrix[j]    = road km, pickup j → dropoff j
+      }
     Returns None if ORS fails.
+
+    We use TWO ORS Matrix calls:
+      Call 1: sources=drivers,  destinations=pickups  → empty leg matrix
+      Call 2: sources=pickups,  destinations=dropoffs → loaded leg per load
+               (diagonal only matters: pickup[j] → dropoff[j])
     """
     if not settings.ORS_API_KEY:
         return None
-
-    if not driver_positions or not pickup_positions:
+    if not driver_positions or not pickup_positions or not dropoff_positions:
         return None
 
-    # ORS Matrix expects [lon, lat] format
-    # Sources = drivers, destinations = pickups
-    sources      = [[d["lon"], d["lat"]] for d in driver_positions]
-    destinations = [[p["lon"], p["lat"]] for p in pickup_positions]
-    locations    = sources + destinations
-    source_indices      = list(range(len(sources)))
-    destination_indices = list(range(len(sources), len(locations)))
-
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(
-                "https://api.openrouteservice.org/v2/matrix/driving-hgv",
-                headers={
-                    "Authorization": settings.ORS_API_KEY,
-                    "Content-Type":  "application/json",
-                },
-                json={
-                    "locations":    locations,
-                    "sources":      source_indices,
-                    "destinations": destination_indices,
-                    "metrics":      ["distance"],   # distance in meters
-                    "units":        "km",
-                }
-            )
-
-        if response.status_code != 200:
-            print(f"ORS Matrix failed: {response.status_code} {response.text[:200]}")
+    async def call_matrix(sources_ll, destinations_ll):
+        locations    = sources_ll + destinations_ll
+        src_idx      = list(range(len(sources_ll)))
+        dst_idx      = list(range(len(sources_ll), len(locations)))
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.post(
+                    "https://api.openrouteservice.org/v2/matrix/driving-hgv",
+                    headers={
+                        "Authorization": settings.ORS_API_KEY,
+                        "Content-Type":  "application/json",
+                    },
+                    json={
+                        "locations":    locations,
+                        "sources":      src_idx,
+                        "destinations": dst_idx,
+                        "metrics":      ["distance"],
+                        "units":        "km",
+                    }
+                )
+            if resp.status_code != 200:
+                print(f"ORS Matrix failed: {resp.status_code} {resp.text[:200]}")
+                return None
+            return resp.json().get("distances")
+        except Exception as e:
+            print(f"ORS Matrix error: {e}")
             return None
 
-        data = response.json()
-        # distances[i][j] = km from driver i to pickup j
-        distances = data.get("distances")
-        if not distances:
-            return None
+    sources_ll      = [[d["lon"], d["lat"]] for d in driver_positions]
+    pickups_ll      = [[p["lon"], p["lat"]] for p in pickup_positions]
+    dropoffs_ll     = [[d["lon"], d["lat"]] for d in dropoff_positions]
 
-        print(f"✅ ORS Matrix: {len(driver_positions)} drivers × "
-              f"{len(pickup_positions)} pickups")
-        return distances
-
-    except Exception as e:
-        print(f"ORS Matrix error: {e}")
+    # Call 1: driver → pickup (empty leg matrix)
+    driver_to_pickup = await call_matrix(sources_ll, pickups_ll)
+    if driver_to_pickup is None:
         return None
+
+    # Call 2: pickup → dropoff (loaded leg per load)
+    # Each pickup[j] paired with its own dropoff[j]
+    # Matrix is NxN but we only need the diagonal pickup[j]→dropoff[j]
+    pickup_to_dropoff_matrix = await call_matrix(pickups_ll, dropoffs_ll)
+    if pickup_to_dropoff_matrix is None:
+        # ORS worked for empty leg but not loaded — use Haversine for loaded
+        print("⚠️  ORS loaded-leg matrix failed — using Haversine for loaded leg")
+        pickup_to_dropoff = None
+    else:
+        # Extract diagonal: pickup[j] → dropoff[j]
+        pickup_to_dropoff = [
+            pickup_to_dropoff_matrix[j][j]
+            for j in range(len(pickup_positions))
+        ]
+
+    print(
+        f"✅ ORS Matrix: {len(driver_positions)} drivers × "
+        f"{len(pickup_positions)} loads "
+        f"({'full ORS' if pickup_to_dropoff else 'empty ORS + loaded Haversine'})"
+    )
+
+    return {
+        "driver_to_pickup":  driver_to_pickup,
+        "pickup_to_dropoff": pickup_to_dropoff,  # list[float] or None
+    }
 
 
 # ─────────────────────────────────────────────
-#  Main optimization function (now async)
+#  Main optimization function (async)
 # ─────────────────────────────────────────────
 
 async def optimize_assignments(
@@ -118,21 +146,20 @@ async def optimize_assignments(
 ) -> List[Dict[str, Any]]:
     """
     Assign loads to drivers to minimize empty mileage.
-    Uses ORS Matrix API for real road distances when available,
-    falls back to Haversine straight-line if ORS fails.
+    Uses ORS Matrix API for real road distances (both legs) when available,
+    falls back to Haversine if ORS fails.
     """
 
     if not drivers or not loads:
         return []
 
-    # ── Build position lists for ORS Matrix call ──────────────────
+    # ── Build position lists ──────────────────────────────────────
     driver_positions = [
         {"lon": d["position_lon"], "lat": d["position_lat"],
          "driver_id": d["driver_id"]}
         for d in drivers
     ]
 
-    # Filter loads with valid coordinates
     valid_loads = [
         l for l in loads
         if l.get("coordEnlev", {}).get("coordinates", [0, 0]) != [0, 0]
@@ -141,22 +168,33 @@ async def optimize_assignments(
         return []
 
     pickup_positions = []
+    dropoff_positions = []                           # ← NEW
     for l in valid_loads:
-        coords = l["coordEnlev"]["coordinates"]
+        enlev_coords = l["coordEnlev"]["coordinates"]
         pickup_positions.append({
-            "lon": coords[0],
-            "lat": coords[1],
+            "lon": enlev_coords[0],
+            "lat": enlev_coords[1],
+            "load_id": str(l["_id"])
+        })
+        # ← NEW: collect dropoff for loaded leg matrix
+        livr_coords = l.get("coordLivr", {}).get("coordinates", [0, 0])
+        dropoff_positions.append({
+            "lon": livr_coords[0],
+            "lat": livr_coords[1],
             "load_id": str(l["_id"])
         })
 
-    # ── Fetch ORS distance matrix ─────────────────────────────────
-    distance_matrix = await fetch_ors_distance_matrix(
-        driver_positions, pickup_positions
+    # ── Fetch ORS distance matrices ───────────────────────────────
+    ors_result = await fetch_ors_distance_matrix(
+        driver_positions, pickup_positions, dropoff_positions   # ← NEW arg
     )
 
-    using_ors = distance_matrix is not None
+    using_ors = ors_result is not None
     if not using_ors:
-        print("⚠️  ORS unavailable — falling back to Haversine distances")
+        print("⚠️  ORS unavailable — falling back to Haversine for all distances")
+
+    driver_to_pickup_matrix = ors_result["driver_to_pickup"]  if using_ors else None
+    pickup_to_dropoff_list  = ors_result["pickup_to_dropoff"] if using_ors else None
 
     # ── Greedy nearest-neighbor assignment ────────────────────────
     assignments         = []
@@ -172,11 +210,20 @@ async def optimize_assignments(
         adress_enlev = load.get("adressEnlev", "")
         adress_livr  = load.get("adressLivr", "")
 
-        coord_enlev  = load["coordEnlev"]["coordinates"]
+        coord_enlev          = load["coordEnlev"]["coordinates"]
         pickup_lon, pickup_lat = coord_enlev[0], coord_enlev[1]
 
-        coord_livr   = load.get("coordLivr", {}).get("coordinates", [0, 0])
+        coord_livr             = load.get("coordLivr", {}).get("coordinates", [0, 0])
         dropoff_lon, dropoff_lat = coord_livr[0], coord_livr[1]
+
+        # Loaded leg distance for this load (same for all drivers)
+        if pickup_to_dropoff_list is not None:
+            raw_loaded = pickup_to_dropoff_list[load_idx]
+            loaded_km_override = float(raw_loaded) if raw_loaded is not None \
+                                 else haversine_km(pickup_lat, pickup_lon,
+                                                   dropoff_lat, dropoff_lon)
+        else:
+            loaded_km_override = None   # estimate_trip_km will use Haversine
 
         best_driver    = None
         best_empty_km  = float("inf")
@@ -188,10 +235,9 @@ async def optimize_assignments(
             if driver["vehicle_capacity_kg"] < poids_kg:
                 continue
 
-            # Use ORS road distance if available, else Haversine
-            if using_ors and distance_matrix:
-                raw = distance_matrix[driver_idx][load_idx]
-                # ORS returns null for unreachable points
+            # Empty leg distance
+            if using_ors and driver_to_pickup_matrix:
+                raw = driver_to_pickup_matrix[driver_idx][load_idx]
                 empty_km = float(raw) if raw is not None else haversine_km(
                     driver["position_lat"], driver["position_lon"],
                     pickup_lat, pickup_lon
@@ -209,7 +255,8 @@ async def optimize_assignments(
                     driver["position_lat"], driver["position_lon"],
                     pickup_lat, pickup_lon,
                     dropoff_lat, dropoff_lon,
-                    empty_km_override=empty_km
+                    empty_km_override=empty_km,
+                    loaded_km_override=loaded_km_override,  # ← NEW
                 )
 
         if best_driver and best_trip_info:
@@ -217,19 +264,19 @@ async def optimize_assignments(
             assigned_load_ids.add(load_id)
 
             assignments.append({
-                "load_id":        load_id,
-                "driver_id":      best_driver["driver_id"],
-                "vehicle_id":     best_driver["vehicle_id"],
-                "driver_name":    best_driver["driver_name"],
-                "adress_enlev":   adress_enlev,
-                "adress_livr":    adress_livr,
-                "poids_kg":       poids_kg,
-                "prix_da":        prix,
-                "empty_km":       best_trip_info["empty_km"],
-                "loaded_km":      best_trip_info["loaded_km"],
-                "total_km":       best_trip_info["total_km"],
-                "efficiency_pct": best_trip_info["efficiency_pct"],
-                "eta_pickup_min": round((best_trip_info["empty_km"] / 70) * 60),
+                "load_id":         load_id,
+                "driver_id":       best_driver["driver_id"],
+                "vehicle_id":      best_driver["vehicle_id"],
+                "driver_name":     best_driver["driver_name"],
+                "adress_enlev":    adress_enlev,
+                "adress_livr":     adress_livr,
+                "poids_kg":        poids_kg,
+                "prix_da":         prix,
+                "empty_km":        best_trip_info["empty_km"],
+                "loaded_km":       best_trip_info["loaded_km"],
+                "total_km":        best_trip_info["total_km"],
+                "efficiency_pct":  best_trip_info["efficiency_pct"],
+                "eta_pickup_min":  round((best_trip_info["empty_km"] / 70) * 60),
                 "distance_source": "ORS" if using_ors else "Haversine",
             })
 

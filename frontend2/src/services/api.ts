@@ -8,9 +8,10 @@ import { API_BASE_URL } from "@/constants/roles";
 
 const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 10000,
+  timeout: 15000,  // increase timeout — ngrok adds latency
   headers: {
     "Content-Type": "application/json",
+    "ngrok-skip-browser-warning": "true",  // ← ADD THIS
   },
 });
 

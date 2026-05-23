@@ -81,6 +81,7 @@ async def update_driver_location(
         {"_id": trip_id},
         {"$push": {"tracking": point}}
     )
+    
 
     # ── WebSocket — push to client and driver ─────────────────────────────
     trip = await db["trajets"].find_one({"_id": trip_id}, {"clientId": 1})

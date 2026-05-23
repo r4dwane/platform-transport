@@ -106,11 +106,37 @@ async def advance_trip_status(
     await db["trajets"].update_one({"_id": trip_id}, {"$set": update})
 
     # Sync load status
+    # Sync load status
     if next_status in LOAD_STATUS_MAP:
         await db["charges"].update_one(
             {"_id": trip["chargeId"]},
             {"$set": {"status": LOAD_STATUS_MAP[next_status]}}
         )
+
+    # ── UPDATE VEHICLE POSITION when trip ends ────────────────────
+    # This gives the optimization engine the truck's real resting
+    # position for the next assignment round
+    if next_status == StatutTrajet.LIVRE:
+        # Get last known GPS position from Redis
+        from app.services.gps import get_driver_location
+        last_pos = await get_driver_location(trip["chauffeurId"])
+        if last_pos:
+            await db["vehicules"].update_one(
+                {"_id": trip["vehiculeId"]},
+                {"$set": {
+                    "position": {
+                        "type": "Point",
+                        "coordinates": [last_pos["lon"], last_pos["lat"]]
+                    },
+                    "status": "DISPONIBLE"  # Mark vehicle as available again
+                }}
+            )
+        else:
+            # No GPS available — just mark as available without moving position
+            await db["vehicules"].update_one(
+                {"_id": trip["vehiculeId"]},
+                {"$set": {"status": "DISPONIBLE"}}
+            )
 
     # Notify client and driver of the status change
     try:
